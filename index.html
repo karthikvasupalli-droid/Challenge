@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BloodMatch — Donation Matching Platform (Prototype)</title>
+  <meta name="description" content="Prototype: Blood donors matching platform — search, register, connect + map & heatmap." />
+  <link rel="preconnect" href="https://api.mapbox.com" crossorigin>
+  <style>
+    /* ==========================
+       BLOODMATCH — Single-file Prototype
+       Upgraded: Map (Mapbox), heatmap, clustering, responsive UI, animations, export assets
+       Replace MAPBOX_TOKEN with your token in the JS section below.
+       ========================== */
+    :root{
+      --primary:#c62828; /* blood-red */
+      --accent:#ff7043;
+      --muted:#6b6b6b;
+      --bg:#f8fafb;
+      --card:#ffffff;
+      --glass: rgba(255,255,255,0.7);
+      --shadow: 0 8px 30px rgba(20,20,20,0.08);
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+    *{box-sizing:border-box}
+    html,body,#app{height:100%;margin:0}
+    body{background:linear-gradient(180deg,var(--bg),#ffffff);color:#111;}
+
+    header{background:var(--primary);color:white;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40}
+    .brand{display:flex;gap:12px;align-items:center}
+    .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(180deg,#fff4f4,#ffdede);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--primary)}
+    nav a{color:rgba(255,255,255,0.95);text-decoration:none;margin-left:14px;font-weight:600}
+
+    main{max-width:1200px;margin:18px auto;padding:0 16px}
+    .container{display:grid;grid-template-columns:1fr 360px;gap:18px;align-items:start}
+    .card{background:var(--card);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+    h1{margin:0 0 8px;font-size:26px}
+    p.lead{margin:0 0 12px;color:var(--muted)}
+
+    /* Search / Controls */
+    .controls{display:flex;gap:10px;flex-wrap:wrap}
+    .input, .select, .btn{padding:10px 12px;border-radius:10px;border:1px solid #e6e6e6;outline:none;font-size:14px}
+    .input{flex:1;min-width:140px}
+    .select{min-width:160px}
+    .btn{background:var(--primary);color:white;border:none;cursor:pointer;transition:transform .12s ease}
+    .btn:hover{transform:translateY(-2px)}
+    .ghost{background:transparent;border:1px solid #ddd;color:#333}
+
+    /* Map */
+    #map{height:520px;border-radius:12px;overflow:hidden}
+
+    /* Results */
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;margin-top:12px}
+    .donor{display:flex;gap:12px;align-items:center;padding:10px;border-radius:10px;border:1px solid #f0f0f0}
+    .avatar{width:56px;height:56px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#ffecec,#ffdede);font-weight:700}
+    .meta{flex:1}
+    .pill{background:#f1f1f1;padding:6px 8px;border-radius:999px;font-weight:600}
+
+    /* Register form */
+    .form-row{display:flex;gap:10px;flex-wrap:wrap}
+    label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+    .muted{font-size:13px;color:var(--muted)}
+
+    /* Animations */
+    .fade-in{animation:fadeIn .46s ease both}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+    footer{margin:26px auto 60px;max-width:1100px;padding:10px 16px;color:var(--muted)}
+
+    /* Responsive */
+    @media (max-width:980px){
+      .container{grid-template-columns:1fr}
+      #map{height:360px}
+    }
+
+  </style>
+  <!-- Mapbox GL JS (replace with MapLibre if you want no-token solution) -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">
+        <div class="logo">BM</div>
+        <div>
+          <div style="font-weight:800">BloodMatch</div>
+          <div style="font-size:12px;opacity:.95">Find nearby donors • Map & heatmap prototype</div>
+        </div>
+      </div>
+      <nav>
+        <a href="#search">Find</a>
+        <a href="#register">Register</a>
+        <a href="#export">Export</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="container">
+        <!-- Left column: Map + controls -->
+        <div>
+          <div class="card fade-in">
+            <h1>Find donors on the map</h1>
+            <p class="lead">Search by city or blood group, view clusters and heatmap density. Click markers for contact details.</p>
+
+            <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap">
+              <input id="qCity" class="input" placeholder="City (e.g., Hyderabad)" />
+              <select id="qGroup" class="select">
+                <option value="">Any blood group</option>
+                <option value="A+">A+</option>
+                <option value="A-">A-</option>
+                <option value="B+">B+</option>
+                <option value="B-">B-</option>
+                <option value="O+">O+</option>
+                <option value="O-">O-</option>
+                <option value="AB+">AB+</option>
+                <option value="AB-">AB-</option>
+              </select>
+              <button id="btnSearch" class="btn">Apply</button>
+              <button id="btnReset" class="btn ghost">Reset</button>
+              <button id="btnHeat" class="btn" style="background:var(--accent)">Toggle Heatmap</button>
+            </div>
+          </div>
+
+          <div id="map" class="card" style="margin-top:12px"></div>
+
+          <div class="card" style="margin-top:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div style="font-weight:700">Nearby results</div>
+              <div class="muted">Click a marker for details</div>
+            </div>
+            <div id="resultsList" style="margin-top:8px;display:flex;flex-direction:column;gap:8px"></div>
+          </div>
+        </div>
+
+        <!-- Right column: Register & Export -->
+        <aside>
+          <div id="register" class="card fade-in">
+            <h3 style="margin-top:0">Register as a donor</h3>
+            <p class="muted">Provide an approximate location (or drag pin on map). For privacy, only city is shown publicly in this demo.</p>
+            <form id="donorForm">
+              <div class="form-row">
+                <div style="flex:1">
+                  <label for="name">Full name</label>
+                  <input id="name" class="input" required />
+                </div>
+                <div style="width:120px">
+                  <label for="age">Age</label>
+                  <input id="age" class="input" type="number" min="18" max="65" required />
+                </div>
+              </div>
+              <div style="margin-top:10px">
+                <label for="bloodGroup">Blood group</label>
+                <select id="bloodGroup" class="select" required>
+                  <option value="">Choose</option>
+                  <option>A+</option>
+                  <option>A-</option>
+                  <option>B+</option>
+                  <option>B-</option>
+                  <option>O+</option>
+                  <option>O-</option>
+                  <option>AB+</option>
+                  <option>AB-</option>
+                </select>
+              </div>
+              <div style="margin-top:10px">
+                <label for="city">City</label>
+                <input id="city" class="input" placeholder="e.g., Pune" required />
+              </div>
+              <div style="margin-top:10px">
+                <label for="phone">Phone (demo)</label>
+                <input id="phone" class="input" placeholder="+91-98765xxxx" required />
+              </div>
+              <div style="margin-top:12px;display:flex;gap:8px">
+                <button type="submit" class="btn">Register</button>
+                <button id="btnDemo" type="button" class="btn ghost">Load demo</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="export" class="card" style="margin-top:12px">
+            <h4 style="margin-top:0">Export & Assets</h4>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <button id="btnExportCSV" class="btn ghost">Export donors (CSV)</button>
+              <button id="btnMapPNG" class="btn">Download map snapshot</button>
+              <button id="btnExportSVG" class="btn ghost">Download logo SVG</button>
+            </div>
+            <p class="muted" style="margin-top:10px">Assets: the logo SVG will be downloaded. Use the CSV to import donors to a backend.</p>
+          </div>
+
+          <div class="card" style="margin-top:12px">
+            <h4 style="margin-top:0">Platform stats</h4>
+            <div class="muted">Donors registered: <strong id="statCount">0</strong></div>
+            <div class="muted" style="margin-top:6px">Last added: <span id="statLast">—</span></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      Prototype: Mapbox used for map & heatmap. Replace MAPBOX_TOKEN with your token. For token-free, swap to MapLibre + OSM tiles and implement a heatmap library separately.
+    </footer>
+  </div>
+
+  <!-- MAPBOX GL JS -->
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+
+  <script>
+    /* ==========================
+       Enhanced JS: Map integration + heatmap + clustering + export tools
+       NOTE: Replace the MAPBOX_TOKEN below with your Mapbox access token.
+       For production: move token to server and secure endpoints, add authentication & verification.
+       ========================== */
+
+    (function(){
+      // --- CONFIG ---
+      const MAPBOX_TOKEN = 'YOUR_MAPBOX_TOKEN_HERE'; // <<< replace this
+      const DB_KEY = 'bloodmatch_donors_v2';
+
+      // DOM
+      const qCity = document.getElementById('qCity');
+      const qGroup = document.getElementById('qGroup');
+      const btnSearch = document.getElementById('btnSearch');
+      const btnReset = document.getElementById('btnReset');
+      const btnHeat = document.getElementById('btnHeat');
+      const resultsList = document.getElementById('resultsList');
+      const donorForm = document.getElementById('donorForm');
+      const btnDemo = document.getElementById('btnDemo');
+      const statCount = document.getElementById('statCount');
+      const statLast = document.getElementById('statLast');
+      const btnExportCSV = document.getElementById('btnExportCSV');
+      const btnMapPNG = document.getElementById('btnMapPNG');
+      const btnExportSVG = document.getElementById('btnExportSVG');
+
+      // Map & layers
+      let map, donorsSourceId = 'donors', heatLayerId='donors-heat';
+      let heatVisible = true;
+
+      // Demo donors with lat/long (approx)
+      const DEMO = [
+        {id:1,name:'Ravi Kumar',age:30,blood:'O+',city:'Hyderabad',phone:'+91-90000-0001',notes:'Available on weekends', coords:[78.4867,17.3850]},
+        {id:2,name:'Ananya Singh',age:25,blood:'B+',city:'Pune',phone:'+91-90000-0002',notes:'Can donate anytime', coords:[73.8567,18.5204]},
+        {id:3,name:'Suresh Rao',age:35,blood:'A+',city:'Hyderabad',phone:'+91-90000-0003',notes:'Prefer calls only', coords:[78.4867,17.3850]},
+        {id:4,name:'Maya Verma',age:28,blood:'O-',city:'Bengaluru',phone:'+91-90000-0004',notes:'First-time donor', coords:[77.5946,12.9716]},
+        {id:5,name:'Karan Patel',age:40,blood:'AB+',city:'Ahmedabad',phone:'+91-90000-0005',notes:'Has given blood twice this year', coords:[72.5714,23.0225]},
+      ];
+
+      // Helpers: local DB
+      function readDB(){ try{ const raw = localStorage.getItem(DB_KEY); return raw? JSON.parse(raw): [] } catch(e){ return [] } }
+      function writeDB(arr){ localStorage.setItem(DB_KEY, JSON.stringify(arr)); }
+      function uid(){ return Date.now()+Math.floor(Math.random()*999); }
+
+      // Convert donors array -> GeoJSON
+      function donorsToGeoJSON(list){
+        return {
+          type:'FeatureCollection',
+          features: list.map(d=>({
+            type:'Feature',
+            properties:{id:d.id,name:d.name,age:d.age,blood:d.blood,city:d.city,phone:d.phone,notes:d.notes},
+            geometry:{type:'Point',coordinates:d.coords || [77.0,20.0]}
+          }))
+        }
+      }
+
+      // Map initialization
+      function initMap(){
+        if(MAPBOX_TOKEN === 'YOUR_MAPBOX_TOKEN_HERE'){
+          // Friendly warning — still initialize with default center
+          console.warn('Mapbox token not set. Replace MAPBOX_TOKEN in the script. Map tiles may not load.');
+        }
+        mapboxgl.accessToken = MAPBOX_TOKEN;
+        map = new mapboxgl.Map({ container:'map', style:'mapbox://styles/mapbox/streets-v12', center:[78.9629,20.5937], zoom:4 });
+
+        map.on('load', ()=>{
+          // Add empty source for donors
+          map.addSource(donorsSourceId, { type:'geojson', data: donorsToGeoJSON(readDB()) });
+
+          // Clustered circles layer
+          map.addLayer({
+            id: 'clusters',
+            type: 'circle',
+            source: donorsSourceId,
+            filter: ['has', 'point_count'],
+            paint: {
+              'circle-color': ['step', ['get', 'point_count'], '#ffb3b3', 5, '#ff7b7b', 20, '#ff5252'],
+              'circle-radius': ['step', ['get', 'point_count'], 18, 5, 22, 20, 28]
+            }
+          });
+
+          map.addLayer({
+            id: 'cluster-count',
+            type: 'symbol',
+            source: donorsSourceId,
+            filter: ['has', 'point_count'],
+            layout: { 'text-field': '{point_count_abbreviated}', 'text-size': 12 }
+          });
+
+          // Individual donor points
+          map.addLayer({
+            id: 'unclustered-point',
+            type: 'circle',
+            source: donorsSourceId,
+            filter: ['!', ['has', 'point_count']],
+            paint: { 'circle-color': '#c62828', 'circle-radius': 8, 'circle-stroke-width':2, 'circle-stroke-color':'#fff' }
+          });
+
+          // Heatmap layer (intensity by count)
+          map.addLayer({
+            id: heatLayerId,
+            type: 'heatmap',
+            source: donorsSourceId,
+            maxzoom: 15,
+            paint: {
+              'heatmap-weight': ['interpolate',['linear'],['get','age'],18,0.2,50,1],
+              'heatmap-intensity': ['interpolate',['linear'],['zoom'],0,1,9,3],
+              'heatmap-color': ['interpolate',['linear'],['heatmap-density'],0,'rgba(255,255,255,0)',0.2,'rgba(255,200,200,0.6)',0.4,'rgba(255,140,140,0.7)',0.7,'rgba(200,40,40,0.9)'],
+              'heatmap-radius': ['interpolate',['linear'],['zoom'],0,20,9,50]
+            }
+          });
+
+          // Click handlers: show popup on unclustered point
+          map.on('click', 'unclustered-point', (e)=>{
+            const f = e.features[0];
+            const p = f.properties;
+            const html = `<div style="font-weight:700;margin-bottom:6px">${p.name} — ${p.blood}</div><div>${p.city} · ${p.age} yrs</div><div style=\"margin-top:6px\">Phone: ${p.phone}</div><div style=\"margin-top:6px;font-size:13px;color:#555\">${p.notes}</div>`;
+            new mapboxgl.Popup().setLngLat(f.geometry.coordinates).setHTML(html).addTo(map);
+          });
+
+          // Zoom into cluster on click
+          map.on('click','clusters',(e)=>{
+            const features = map.queryRenderedFeatures(e.point, { layers:['clusters'] });
+            const clusterId = features[0].properties.cluster_id;
+            map.getSource(donorsSourceId).getClusterExpansionZoom(clusterId, (err, zoom)=>{
+              if(err) return; map.easeTo({center: features[0].geometry.coordinates, zoom});
+            });
+          });
+
+          // Change cursor
+          map.on('mouseenter','clusters',()=> map.getCanvas().style.cursor='pointer');
+          map.on('mouseleave','clusters',()=> map.getCanvas().style.cursor='');
+
+          refreshMapData();
+        });
+      }
+
+      // Render list of results to sidebar
+      function renderResults(list){
+        resultsList.innerHTML = '';
+        if(!list.length){ resultsList.innerHTML = '<div class="muted">No donors found</div>'; return }
+        list.forEach(d => {
+          const el = document.createElement('div'); el.className='donor';
+          el.innerHTML = `
+            <div class="avatar">${d.blood}</div>
+            <div class="meta">
+              <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">${d.name}</div><div class="pill">${d.city}</div></div>
+              <div class="muted">${d.age} yrs · ${d.blood}</div>
+              <div style="margin-top:6px;font-size:13px;color:#333">${d.notes || ''}</div>
+            </div>
+            <div style="text-align:right">
+              <button class="btn" data-id="${d.id}" style="padding:8px 10px">View</button>
+            </div>
+          `;
+          el.querySelector('button').addEventListener('click', ()=>{
+            // Fly to donor on map and open popup
+            if(map && d.coords){ map.flyTo({center:d.coords, zoom:12}); new mapboxgl.Popup().setLngLat(d.coords).setHTML(`<div style=\"font-weight:700\">${d.name} — ${d.blood}</div><div>${d.city}</div><div style=\"margin-top:6px\">Phone: ${d.phone}</div>`).addTo(map);} else alert('Coords not available in this demo');
+          });
+          resultsList.appendChild(el);
+        })
+      }
+
+      // Apply search filters
+      function search(){
+        const city = (qCity.value||'').trim().toLowerCase();
+        const group = (qGroup.value||'').trim();
+        let data = readDB();
+        if(city) data = data.filter(d=> d.city && d.city.toLowerCase().includes(city));
+        if(group) data = data.filter(d=> d.blood === group);
+        renderResults(data);
+        // update map source
+        if(map && map.getSource(donorsSourceId)) map.getSource(donorsSourceId).setData(donorsToGeoJSON(data));
+      }
+
+      // Update map with DB
+      function refreshMapData(){
+        const data = readDB();
+        if(map && map.getSource(donorsSourceId)) map.getSource(donorsSourceId).setData(donorsToGeoJSON(data));
+        updateStats(); renderResults(data);
+      }
+
+      // Toggle heatmap
+      function toggleHeat(){
+        if(!map) return; heatVisible = !heatVisible; const visibility = heatVisible? 'visible':'none';
+        if(map.getLayer(heatLayerId)) map.setLayoutProperty(heatLayerId,'visibility',visibility);
+        btnHeat.textContent = heatVisible? 'Toggle Heatmap' : 'Show Heatmap';
+      }
+
+      // Export CSV
+      function exportCSV(){
+        const data = readDB();
+        if(!data.length){ alert('No donors to export'); return }
+        const header = ['id','name','age','blood','city','phone','notes','lng','lat'];
+        const rows = data.map(d=> [d.id,d.name,d.age,d.blood,d.city,d.phone,`"${(d.notes||'').replace(/"/g,'""')}"`, (d.coords||[])[0]||'', (d.coords||[])[1]||''] );
+        const csv = [header.join(','), ...rows.map(r=> r.join(','))].join('\n');
+        const blob = new Blob([csv],{type:'text/csv'}); const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href=url; a.download='bloodmatch_donors.csv'; a.click(); URL.revokeObjectURL(url);
+      }
+
+      // Export map as PNG
+      function exportMapPNG(){
+        if(!map){ alert('Map not loaded'); return }
+        try{
+          const dataUrl = map.getCanvas().toDataURL('image/png');
+          const a = document.createElement('a'); a.href = dataUrl; a.download = 'bloodmatch_map.png'; a.click();
+        }catch(e){ alert('Unable to export map (CORS or token may restrict).'); }
+      }
+
+      // Export logo SVG
+      function exportSVG(){
+        const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='512' height='512' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='#fff4f4'/><path d='M12 3c2.2 0 4 1.8 4 4 0 1-.4 2-1.2 2.8L12 18l-2.8-8.2C8.4 9 8 8 8 7c0-2.2 1.8-4 4-4z' fill='#c62828'/></svg>`;
+        const blob = new Blob([svg],{type:'image/svg+xml'}); const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'bloodmatch_logo.svg'; a.click(); URL.revokeObjectURL(url);
+      }
+
+      // Form submit: register donor
+      donorForm.addEventListener('submit', (e)=>{
+        e.preventDefault();
+        const name = document.getElementById('name').value.trim();
+        const age = parseInt(document.getElementById('age').value,10);
+        const blood = document.getElementById('bloodGroup').value;
+        const city = document.getElementById('city').value.trim();
+        const phone = document.getElementById('phone').value.trim();
+        if(!name||!age||!blood||!city||!phone){ alert('Fill all fields'); return }
+        const db = readDB();
+        // For this prototype, we'll geocode city approximately using a simple static map of city centers
+        const coords = cityToCoords(city) || [77.0 + Math.random(),20.0 + Math.random()*2];
+        const record = { id: uid(), name, age, blood, city, phone, notes:'Registered via prototype', coords };
+        db.push(record); writeDB(db); donorForm.reset(); refreshMapData(); alert('Registered — visible on the map (prototype)');
+      });
+
+      // Demo data loader
+      btnDemo.addEventListener('click', ()=>{
+        const toWrite = DEMO.map(d=> ({ ...d, id: uid() })); writeDB(toWrite); refreshMapData(); });
+
+      // Buttons
+      btnSearch.addEventListener('click', search);
+      btnReset.addEventListener('click', ()=>{ qCity.value=''; qGroup.value=''; refreshMapData(); });
+      btnHeat.addEventListener('click', toggleHeat);
+      btnExportCSV.addEventListener('click', exportCSV);
+      btnMapPNG.addEventListener('click', exportMapPNG);
+      btnExportSVG.addEventListener('click', exportSVG);
+
+      // Utility: basic city -> coords (prototype only)
+      function cityToCoords(city){
+        const m = city.toLowerCase();
+        const map = {
+          'hyderabad':[78.4867,17.3850], 'pune':[73.8567,18.5204], 'bengaluru':[77.5946,12.9716], 'mumbai':[72.8777,19.0760], 'delhi':[77.1025,28.7041], 'ahmedabad':[72.5714,23.0225]
+        };
+        return map[m] ? map[m].slice() : null;
+      }
+
+      // Stats
+      function updateStats(){ const data = readDB(); statCount.textContent = data.length; statLast.textContent = data.length? data[data.length-1].name + ' ('+ new Date(parseInt(data[data.length-1].id)).toLocaleString()+')' : '—'; }
+
+      // Init
+      function init(){ initMap(); const db = readDB(); if(db.length) refreshMapData(); else resultsList.innerHTML = '<div class="muted">No donors yet — load demo or register.</div>'; updateStats(); }
+      init();
+
+    })();
+  </script>
+</body>
+</html>
